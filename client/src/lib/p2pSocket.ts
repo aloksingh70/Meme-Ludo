@@ -48,6 +48,14 @@ export class P2PSocket {
 
   private initPeer() {
     try {
+      if (this.peer && !this.peer.destroyed) {
+        try {
+          this.peer.destroy()
+        } catch (e) {
+          console.warn('Error destroying existing peer in initPeer:', e)
+        }
+      }
+
       this.peer = new Peer({
         config: {
           iceServers: [
@@ -68,8 +76,9 @@ export class P2PSocket {
       })
 
       this.peer.on('disconnected', () => {
-        this.connected = false
-        this.emitLocal('disconnect')
+        if (this.peer && !this.peer.destroyed) {
+          this.peer.reconnect()
+        }
       })
     } catch (e) {
       console.error('Failed to init Peer:', e)
@@ -103,11 +112,74 @@ export class P2PSocket {
   ): void
   emit(event: string, ...args: any[]): void
   emit(event: string, ...args: any[]) {
+    // Top-level room lifecycle events always handled cleanly regardless of prior role
+    if (event === 'room:create') {
+      this.startHostRoom(args[0], args[1])
+      return
+    }
+    if (event === 'room:join') {
+      const [{ code, name, playerId }, ack] = args
+      this.joinAsGuest(code, name, playerId, ack)
+      return
+    }
+    if (event === 'room:leave') {
+      this.leaveRoom()
+      return
+    }
+
     if (this.isHost) {
       this.handleHostEmit(event, args)
     } else {
       this.handleGuestEmit(event, args)
     }
+  }
+
+  private leaveRoom() {
+    if (this.isHost && this.mgr && this.room && this.myPlayerId) {
+      this.mgr.leave(this.room, this.myPlayerId)
+      this.broadcastRoom()
+    } else if (!this.isHost && this.guestConn && this.myPlayerId) {
+      try {
+        this.guestConn.send({ type: 'leave', playerId: this.myPlayerId })
+      } catch (e) {
+        console.warn('Failed to send guest leave:', e)
+      }
+    }
+    this.resetToLobby()
+  }
+
+  private resetToLobby() {
+    if (this.botTimer) {
+      clearTimeout(this.botTimer)
+      this.botTimer = null
+    }
+
+    if (this.guestConn) {
+      try {
+        this.guestConn.close()
+      } catch (e) {
+        console.warn('Error closing guestConn:', e)
+      }
+      this.guestConn = null
+    }
+
+    for (const c of this.hostConns.values()) {
+      try {
+        c.close()
+      } catch (e) {
+        console.warn('Error closing host connection:', e)
+      }
+    }
+    this.hostConns.clear()
+
+    this.isHost = false
+    this.room = null
+    this.mgr = null
+    this.myPlayerId = null
+    this.pendingAcks.clear()
+
+    // Immediately re-create a clean idle peer so the user stays connected for next room
+    this.initPeer()
   }
 
   // =================== HOST LOGIC ===================
@@ -176,10 +248,6 @@ export class P2PSocket {
       for (const conn of this.hostConns.values()) {
         conn.send({ type: 'chat', message: chatMsg })
       }
-    } else if (event === 'room:leave') {
-      this.mgr.leave(this.room, this.myPlayerId!)
-      this.broadcastRoom()
-      this.disconnect()
     }
   }
 
@@ -226,17 +294,6 @@ export class P2PSocket {
 
   // =================== GUEST LOGIC ===================
   private handleGuestEmit(event: string, args: any[]) {
-    if (event === 'room:create') {
-      this.startHostRoom(args[0], args[1])
-      return
-    }
-
-    if (event === 'room:join') {
-      const [{ code, name, playerId }, ack] = args
-      this.joinAsGuest(code, name, playerId, ack)
-      return
-    }
-
     if (!this.guestConn) return
 
     const id = Math.random().toString(36).slice(2)
@@ -266,9 +323,6 @@ export class P2PSocket {
       if (typeof text === 'string' && text.trim()) {
         this.guestConn.send({ type: 'chat', text: text.trim().slice(0, 200), playerId: this.myPlayerId! })
       }
-    } else if (event === 'room:leave') {
-      this.guestConn.send({ type: 'leave', playerId: this.myPlayerId! })
-      this.disconnect()
     }
   }
 
@@ -285,6 +339,28 @@ export class P2PSocket {
     const name = typeof payload === 'object' ? payload.name : payload
     const mode = typeof payload === 'object' ? payload.mode ?? 'solo' : 'solo'
 
+    // Clean up any existing state
+    if (this.botTimer) {
+      clearTimeout(this.botTimer)
+      this.botTimer = null
+    }
+    if (this.guestConn) {
+      try {
+        this.guestConn.close()
+      } catch (e) {
+        console.warn('Error closing guestConn:', e)
+      }
+      this.guestConn = null
+    }
+    for (const c of this.hostConns.values()) {
+      try {
+        c.close()
+      } catch (e) {
+        console.warn('Error closing hostConn:', e)
+      }
+    }
+    this.hostConns.clear()
+
     this.mgr = new RoomManager()
     const res = this.mgr.createRoom(name, 'host', null, mode)
     if (!res.ok) {
@@ -296,11 +372,19 @@ export class P2PSocket {
     this.myPlayerId = res.playerId
     this.isHost = true
 
-    // Re-create peer with the room code ID so guests can find it
-    this.peer?.destroy()
+    // Destroy existing idle peer
+    try {
+      if (this.peer && !this.peer.destroyed) {
+        this.peer.destroy()
+      }
+    } catch (e) {
+      console.warn('Error destroying old peer:', e)
+    }
+
     const hostPeerId = PEER_PREFIX + this.room.code
 
-    this.peer = new Peer(hostPeerId, {
+    let opened = false
+    const hostPeer = new Peer(hostPeerId, {
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -309,15 +393,17 @@ export class P2PSocket {
         ]
       }
     })
+    this.peer = hostPeer
 
-    this.peer.on('open', () => {
+    hostPeer.on('open', () => {
+      opened = true
       this.connected = true
       this.emitLocal('connect')
       ack?.({ ok: true, code: this.room!.code, playerId: this.myPlayerId! })
       this.broadcastRoom()
     })
 
-    this.peer.on('connection', (conn) => {
+    hostPeer.on('connection', (conn) => {
       conn.on('open', () => {
         this.hostConns.set(conn.peer, conn)
       })
@@ -336,12 +422,12 @@ export class P2PSocket {
       })
     })
 
-    this.peer.on('error', (err: any) => {
+    hostPeer.on('error', (err: any) => {
       console.warn('Host Peer error:', err)
-      if (err.type === 'unavailable-id') {
+      if (err.type === 'unavailable-id' && !opened) {
         // Retry with another code if by rare chance already taken
         this.startHostRoom(payload, ack)
-      } else {
+      } else if (!opened) {
         ack?.({ ok: false, error: err.message ?? 'Failed to create room' })
       }
     })
@@ -369,6 +455,30 @@ export class P2PSocket {
         this.broadcastRoom()
         this.broadcastState()
         this.checkBot()
+      }
+    } else if (msg.type === 'setMode') {
+      const res = this.mgr.setMode(this.room, msg.playerId, msg.mode)
+      conn.send({ type: 'ack', id: msg.id, ok: res.ok, error: res.ok ? undefined : res.error })
+      if (res.ok) {
+        this.broadcastRoom()
+      }
+    } else if (msg.type === 'addBot') {
+      const res = this.mgr.addBot(this.room, msg.playerId)
+      conn.send({ type: 'ack', id: msg.id, ok: res.ok, error: res.ok ? undefined : res.error })
+      if (res.ok) {
+        this.broadcastRoom()
+      }
+    } else if (msg.type === 'removeSeat') {
+      const res = this.mgr.removeSeat(this.room, msg.playerId, msg.index)
+      conn.send({ type: 'ack', id: msg.id, ok: res.ok, error: res.ok ? undefined : res.error })
+      if (res.ok) {
+        this.broadcastRoom()
+      }
+    } else if (msg.type === 'swapSeats') {
+      const res = this.mgr.swapSeats(this.room, msg.playerId, msg.index1, msg.index2)
+      conn.send({ type: 'ack', id: msg.id, ok: res.ok, error: res.ok ? undefined : res.error })
+      if (res.ok) {
+        this.broadcastRoom()
       }
     } else if (msg.type === 'roll') {
       const res = this.mgr.roll(this.room, msg.playerId)
@@ -408,6 +518,10 @@ export class P2PSocket {
   private joinAsGuest(code: string, name: string, playerId: string | undefined, ack: (res: any) => void) {
     const formattedCode = code.trim().toUpperCase()
     const targetPeerId = PEER_PREFIX + formattedCode
+
+    if (this.isHost) {
+      this.resetToLobby()
+    }
 
     if (!this.peer || this.peer.destroyed) {
       this.initPeer()
@@ -481,7 +595,13 @@ export class P2PSocket {
     }
     this.guestConn?.close()
     this.guestConn = null
-    for (const c of this.hostConns.values()) c.close()
+    for (const c of this.hostConns.values()) {
+      try {
+        c.close()
+      } catch (e) {
+        console.warn('Error closing conn in disconnect:', e)
+      }
+    }
     this.hostConns.clear()
     this.peer?.destroy()
     this.peer = null

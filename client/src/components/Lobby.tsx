@@ -521,9 +521,16 @@ export default function Lobby(p: Props) {
               Connecting to the game server…
             </p>
             {connectingTooLong && (
-              <div className="rounded-lg border border-marigold/30 bg-marigold/10 p-3 text-xs text-marigold max-w-sm">
-                <span className="font-semibold block mb-0.5">⚠️ Game server unreachable</span>
-                Online multiplayer requires the backend game server to be running online.
+              <div className="rounded-lg border border-marigold/30 bg-marigold/10 p-3 text-xs text-marigold max-w-sm space-y-2">
+                <span className="font-semibold block">⚠️ Connecting to game network…</span>
+                <p>Connecting to the online multiplayer network.</p>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded bg-marigold/20 px-2.5 py-1 text-xs font-semibold text-marigold hover:bg-marigold/30 transition-colors cursor-pointer"
+                >
+                  Retry connection
+                </button>
               </div>
             )}
           </div>
