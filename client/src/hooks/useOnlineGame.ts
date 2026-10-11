@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
+import { P2PSocket } from '../lib/p2pSocket'
 import type {
   ClientToServerEvents,
   GameEvent,
@@ -13,7 +14,7 @@ import type { GameView } from '../lib/gameView'
 import { calculateHopTiming, getTokenPath } from '../lib/path'
 import { sound } from '../lib/sound'
 
-type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>
+type ClientSocket = Socket<ServerToClientEvents, ClientToServerEvents> | P2PSocket
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? 'http://localhost:3001'
 const SESSION_KEY = 'ludo:session'
@@ -149,9 +150,46 @@ export function useOnlineGame() {
   }, [])
 
   useEffect(() => {
+    const isProductionWithoutCustomServer =
+      typeof window !== 'undefined' &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      (SERVER_URL.includes('localhost') || SERVER_URL.includes('127.0.0.1'))
+
+    if (isProductionWithoutCustomServer) {
+      const p2p = new P2PSocket()
+      socketRef.current = p2p
+      p2p.on('connect', () => {
+        setConnected(true)
+        const saved = loadSession()
+        if (saved) {
+          p2p.emit(
+            'room:join',
+            { code: saved.code, name: saved.name, playerId: saved.playerId },
+            (res: any) => {
+              if (!res.ok) saveSession(null)
+            }
+          )
+        }
+      })
+      p2p.on('disconnect', () => setConnected(false))
+      p2p.on('room:update', setRoom)
+      p2p.on('game:state', (s) => {
+        queue.current.push(s)
+        pump()
+      })
+      if (p2p.connected) setConnected(true)
+
+      return () => {
+        p2p.disconnect()
+        socketRef.current = null
+      }
+    }
+
     const socket: ClientSocket = io(SERVER_URL, {
       transports: ['websocket', 'polling'],
-      withCredentials: true
+      withCredentials: true,
+      timeout: 3000
     })
     socketRef.current = socket
 
@@ -162,7 +200,7 @@ export function useOnlineGame() {
         socket.emit(
           'room:join',
           { code: saved.code, name: saved.name, playerId: saved.playerId },
-          (res) => {
+          (res: any) => {
             if (!res.ok) saveSession(null)
           }
         )
@@ -173,6 +211,36 @@ export function useOnlineGame() {
     socket.on('game:state', (s) => {
       queue.current.push(s)
       pump()
+    })
+
+    // If socket.io connection fails, seamlessly fall back to P2P
+    socket.on('connect_error', () => {
+      if (!socketRef.current || socketRef.current instanceof P2PSocket) return
+      console.warn('Backend server unreachable, switching to P2P Room network')
+      socket.disconnect()
+
+      const p2p = new P2PSocket()
+      socketRef.current = p2p
+      p2p.on('connect', () => {
+        setConnected(true)
+        const saved = loadSession()
+        if (saved) {
+          p2p.emit(
+            'room:join',
+            { code: saved.code, name: saved.name, playerId: saved.playerId },
+            (res: any) => {
+              if (!res.ok) saveSession(null)
+            }
+          )
+        }
+      })
+      p2p.on('disconnect', () => setConnected(false))
+      p2p.on('room:update', setRoom)
+      p2p.on('game:state', (s) => {
+        queue.current.push(s)
+        pump()
+      })
+      if (p2p.connected) setConnected(true)
     })
 
     return () => {
@@ -187,7 +255,7 @@ export function useOnlineGame() {
     setError(null)
     setBusy(true)
     sound.playClick()
-    s.emit('room:create', { name, mode }, (res) => {
+    s.emit('room:create', { name, mode }, (res: any) => {
       setBusy(false)
       if (res.ok) saveSession({ code: res.code, playerId: res.playerId, name })
       else setError(res.error)
@@ -197,7 +265,7 @@ export function useOnlineGame() {
   const setMode = useCallback((mode: GameMode) => {
     setError(null)
     sound.playClick()
-    socketRef.current?.emit('room:setMode', mode, (res) => {
+    socketRef.current?.emit('room:setMode', mode, (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
@@ -208,7 +276,7 @@ export function useOnlineGame() {
     setError(null)
     setBusy(true)
     sound.playClick()
-    s.emit('room:join', { code, name }, (res) => {
+    s.emit('room:join', { code, name }, (res: any) => {
       setBusy(false)
       if (res.ok) saveSession({ code: res.code, playerId: res.playerId, name })
       else setError(res.error)
@@ -218,7 +286,7 @@ export function useOnlineGame() {
   const addBot = useCallback(() => {
     setError(null)
     sound.playClick()
-    socketRef.current?.emit('room:addBot', (res) => {
+    socketRef.current?.emit('room:addBot', (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
@@ -226,21 +294,21 @@ export function useOnlineGame() {
   const start = useCallback(() => {
     setError(null)
     sound.playClick()
-    socketRef.current?.emit('room:start', (res) => {
+    socketRef.current?.emit('room:start', (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
 
   const removeSeat = useCallback((index: number) => {
     sound.playClick()
-    socketRef.current?.emit('room:removeSeat', index, (res) => {
+    socketRef.current?.emit('room:removeSeat', index, (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
 
   const swapSeats = useCallback((index1: number, index2: number) => {
     sound.playClick()
-    socketRef.current?.emit('room:swapSeats', index1, index2, (res) => {
+    socketRef.current?.emit('room:swapSeats', index1, index2, (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
@@ -259,7 +327,7 @@ export function useOnlineGame() {
     if (!s) return
     sound.playClick()
     setWaiting(true)
-    s.emit('game:roll', (res) => {
+    s.emit('game:roll', (res: any) => {
       if (!res.ok) {
         setWaiting(false)
         setError(res.error)
@@ -269,7 +337,7 @@ export function useOnlineGame() {
 
   const choose = useCallback((tokenIndex: number) => {
     sound.playClick()
-    socketRef.current?.emit('game:move', tokenIndex, (res) => {
+    socketRef.current?.emit('game:move', tokenIndex, (res: any) => {
       if (!res.ok) setError(res.error)
     })
   }, [])
