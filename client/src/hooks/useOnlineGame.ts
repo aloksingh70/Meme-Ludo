@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { P2PSocket } from '../lib/p2pSocket'
 import type {
+  ChatMessage,
   ClientToServerEvents,
   GameEvent,
   GameMode,
@@ -46,6 +47,7 @@ export function useOnlineGame() {
   const [rolling, setRolling] = useState(false)
   const [waiting, setWaiting] = useState(false) // asked the server to roll, no answer yet
   const [log, setLog] = useState<string[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -174,6 +176,9 @@ export function useOnlineGame() {
       })
       p2p.on('disconnect', () => setConnected(false))
       p2p.on('room:update', setRoom)
+      p2p.on('room:chat', (msg) => {
+        setChatMessages((prev) => [...prev.slice(-99), msg])
+      })
       p2p.on('game:state', (s) => {
         queue.current.push(s)
         pump()
@@ -208,6 +213,9 @@ export function useOnlineGame() {
     })
     socket.on('disconnect', () => setConnected(false))
     socket.on('room:update', setRoom)
+    socket.on('room:chat', (msg) => {
+      setChatMessages((prev) => [...prev.slice(-99), msg])
+    })
     socket.on('game:state', (s) => {
       queue.current.push(s)
       pump()
@@ -236,6 +244,9 @@ export function useOnlineGame() {
       })
       p2p.on('disconnect', () => setConnected(false))
       p2p.on('room:update', setRoom)
+      p2p.on('room:chat', (msg) => {
+        setChatMessages((prev) => [...prev.slice(-99), msg])
+      })
       p2p.on('game:state', (s) => {
         queue.current.push(s)
         pump()
@@ -318,9 +329,16 @@ export function useOnlineGame() {
     socketRef.current?.emit('room:leave')
     saveSession(null)
     setRoom(null)
+    setChatMessages([])
     resetGame()
     setError(null)
   }, [resetGame])
+
+  const sendChat = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    socketRef.current?.emit('room:chat', trimmed)
+  }, [])
 
   const roll = useCallback(() => {
     const s = socketRef.current
@@ -384,6 +402,8 @@ export function useOnlineGame() {
     view,
     error,
     busy,
+    chatMessages,
+    sendChat,
     createRoom,
     joinRoom,
     setMode,

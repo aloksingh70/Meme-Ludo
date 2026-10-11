@@ -1,6 +1,7 @@
 import Peer, { type DataConnection } from 'peerjs'
 import {
   RoomManager,
+  type ChatMessage,
   type ClientToServerEvents,
   type GameMode,
   type GameState,
@@ -20,12 +21,14 @@ type MessageToHost =
   | { type: 'swapSeats'; index1: number; index2: number; playerId: string; id: string }
   | { type: 'roll'; playerId: string; id: string }
   | { type: 'move'; tokenIndex: number; playerId: string; id: string }
+  | { type: 'chat'; text: string; playerId: string }
   | { type: 'leave'; playerId: string }
 
 type MessageToGuest =
   | { type: 'ack'; id: string; ok: boolean; data?: any; error?: string }
   | { type: 'room:update'; room: RoomPublic }
   | { type: 'game:state'; state: GameState }
+  | { type: 'chat'; message: ChatMessage }
 
 export class P2PSocket {
   private listeners = new Map<string, Set<(...args: any[]) => void>>()
@@ -156,6 +159,23 @@ export class P2PSocket {
         this.broadcastState()
         this.checkBot()
       }
+    } else if (event === 'room:chat') {
+      const [text] = args
+      if (typeof text !== 'string') return
+      const clean = text.trim().slice(0, 200)
+      if (!clean) return
+      const seat = this.room.seats.find((s) => s.playerId === this.myPlayerId)
+      const chatMsg: ChatMessage = {
+        id: Math.random().toString(36).slice(2),
+        senderName: seat?.name ?? 'Host',
+        senderColor: seat?.color ?? null,
+        text: clean,
+        time: Date.now()
+      }
+      this.emitLocal('room:chat', chatMsg)
+      for (const conn of this.hostConns.values()) {
+        conn.send({ type: 'chat', message: chatMsg })
+      }
     } else if (event === 'room:leave') {
       this.mgr.leave(this.room, this.myPlayerId!)
       this.broadcastRoom()
@@ -241,6 +261,11 @@ export class P2PSocket {
     } else if (event === 'game:move') {
       const [tokenIndex, ack] = args
       this.sendGuestAction({ type: 'move', tokenIndex, playerId: this.myPlayerId!, id }, ack)
+    } else if (event === 'room:chat') {
+      const [text] = args
+      if (typeof text === 'string' && text.trim()) {
+        this.guestConn.send({ type: 'chat', text: text.trim().slice(0, 200), playerId: this.myPlayerId! })
+      }
     } else if (event === 'room:leave') {
       this.guestConn.send({ type: 'leave', playerId: this.myPlayerId! })
       this.disconnect()
@@ -359,6 +384,19 @@ export class P2PSocket {
         this.broadcastState()
         this.checkBot()
       }
+    } else if (msg.type === 'chat') {
+      const seat = this.room.seats.find((s) => s.playerId === msg.playerId)
+      const chatMsg: ChatMessage = {
+        id: Math.random().toString(36).slice(2),
+        senderName: seat?.name ?? 'Player',
+        senderColor: seat?.color ?? null,
+        text: msg.text,
+        time: Date.now()
+      }
+      this.emitLocal('room:chat', chatMsg)
+      for (const guestConn of this.hostConns.values()) {
+        guestConn.send({ type: 'chat', message: chatMsg })
+      }
     } else if (msg.type === 'leave') {
       this.mgr.leave(this.room, msg.playerId)
       this.broadcastRoom()
@@ -414,6 +452,8 @@ export class P2PSocket {
           this.emitLocal('room:update', msg.room)
         } else if (msg.type === 'game:state') {
           this.emitLocal('game:state', msg.state)
+        } else if (msg.type === 'chat') {
+          this.emitLocal('room:chat', msg.message)
         }
       })
 

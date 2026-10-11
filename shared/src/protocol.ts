@@ -26,6 +26,14 @@ export interface RoomPublic {
   you: number | null
 }
 
+export interface ChatMessage {
+  id: string
+  senderName: string
+  senderColor?: Color | null
+  text: string
+  time: number
+}
+
 export type Ack<T extends object = object> = (
   res: ({ ok: true } & T) | { ok: false; error: string }
 ) => void
@@ -45,6 +53,7 @@ export interface ClientToServerEvents {
   'room:swapSeats': (index1: number, index2: number, ack: Ack) => void
   'room:start': (ack: Ack) => void
   'room:leave': () => void
+  'room:chat': (text: string) => void
   'game:roll': (ack: Ack) => void
   'game:move': (tokenIndex: number, ack: Ack) => void
 }
@@ -52,4 +61,5 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
   'room:update': (room: RoomPublic) => void
   'game:state': (state: GameState) => void
+  'room:chat': (msg: ChatMessage) => void
 }

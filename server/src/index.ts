@@ -388,6 +388,22 @@ io.on('connection', (socket) => {
     if (res.ok) changed(c.room)
   })
 
+  socket.on('room:chat', (text) => {
+    const c = ctx()
+    if (!c || typeof text !== 'string') return
+    const clean = text.trim().slice(0, 200)
+    if (!clean) return
+    const seat = c.room.seats.find((s) => s.playerId === c.playerId)
+    const msg = {
+      id: randomUUID(),
+      senderName: seat?.name ?? 'Player',
+      senderColor: seat?.color ?? null,
+      text: clean,
+      time: Date.now()
+    }
+    io.to(c.room.code).emit('room:chat', msg)
+  })
+
   socket.on('room:leave', () => {
     const c = ctx()
     if (!c) return

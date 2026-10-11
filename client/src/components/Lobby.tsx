@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { GameMode, RoomPublic } from '@ludo/shared'
 import { useAuth } from '../context/AuthContext'
 import { sound } from '../lib/sound'
+import { ExitGateIcon } from './GameScreen'
 
 const NAME_KEY = 'ludo:name'
 
@@ -326,26 +327,28 @@ export default function Lobby(p: Props) {
                 Start game
               </button>
               <button
-                className="btn-quiet"
+                className="btn-quiet inline-flex items-center gap-1.5 cursor-pointer text-ivory/80 hover:text-ruby"
                 onClick={() => {
                   sound.playClick()
                   p.onLeave()
                 }}
               >
-                Leave room
+                <ExitGateIcon className="w-4 h-4 text-ruby-light" />
+                <span>Exit room</span>
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-4">
               <p className="text-ivory-dim">Waiting for the host to start…</p>
               <button
-                className="btn-quiet"
+                className="btn-quiet inline-flex items-center gap-1.5 cursor-pointer text-ivory/80 hover:text-ruby"
                 onClick={() => {
                   sound.playClick()
                   p.onLeave()
                 }}
               >
-                Leave
+                <ExitGateIcon className="w-4 h-4 text-ruby-light" />
+                <span>Exit room</span>
               </button>
             </div>
           )}
@@ -527,13 +530,14 @@ export default function Lobby(p: Props) {
         )}
 
         <button
-          className="btn-quiet mt-12 cursor-pointer"
+          className="btn-quiet mt-12 inline-flex items-center gap-2 cursor-pointer text-ivory/80 hover:text-ruby"
           onClick={() => {
             sound.playClick()
             p.onBack()
           }}
         >
-          Back to menu
+          <ExitGateIcon className="w-4 h-4 text-ruby-light" />
+          <span>Exit to menu</span>
         </button>
       </div>
     </main>
