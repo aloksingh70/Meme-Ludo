@@ -22,7 +22,7 @@ import {
 } from './auth'
 
 const PORT = Number(process.env.PORT ?? 3001)
-const ORIGINS = (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173')
+const ORIGINS = (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173,https://meme-ludo.vercel.app')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)

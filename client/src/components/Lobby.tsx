@@ -30,6 +30,16 @@ export default function Lobby(p: Props) {
     (new URLSearchParams(location.search).get('room') ?? '').toUpperCase().slice(0, 5)
   )
   const [copied, setCopied] = useState(false)
+  const [connectingTooLong, setConnectingTooLong] = useState(false)
+
+  useEffect(() => {
+    if (p.connected) {
+      setConnectingTooLong(false)
+      return
+    }
+    const t = setTimeout(() => setConnectingTooLong(true), 4000)
+    return () => clearTimeout(t)
+  }, [p.connected])
 
   useEffect(() => {
     if (user?.username) {
@@ -503,9 +513,17 @@ export default function Lobby(p: Props) {
           </p>
         )}
         {!p.connected && (
-          <p className="mt-6 text-ivory-dim" aria-live="polite">
-            Connecting to the game server…
-          </p>
+          <div className="mt-6 space-y-2">
+            <p className="text-ivory-dim text-sm" aria-live="polite">
+              Connecting to the game server…
+            </p>
+            {connectingTooLong && (
+              <div className="rounded-lg border border-marigold/30 bg-marigold/10 p-3 text-xs text-marigold max-w-sm">
+                <span className="font-semibold block mb-0.5">⚠️ Game server unreachable</span>
+                Online multiplayer requires the backend game server to be running online.
+              </div>
+            )}
+          </div>
         )}
 
         <button
