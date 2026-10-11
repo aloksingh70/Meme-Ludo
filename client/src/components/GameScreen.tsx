@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FINISH_PROGRESS, getActingColor, teamOf, type Color } from '@ludo/shared'
 import Board from './Board'
 import Die from './Die'
@@ -9,6 +9,27 @@ import type { GameView } from '../lib/gameView'
 import { COLOR_HEX, COLOR_NAME } from '../lib/geometry'
 import { sound } from '../lib/sound'
 
+export function ExitGateIcon({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M10 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+      <path d="M10 3l4 2.5v13L10 21" />
+      <polyline points="17 16 21 12 17 8" />
+      <line x1="21" y1="12" x2="11" y2="12" />
+    </svg>
+  )
+}
+
 interface Props {
   game: GameView
   onExit: () => void
@@ -18,6 +39,24 @@ export default function GameScreen({ game, onExit }: Props) {
   const { state, rolling, canAct, rows, log, roll, choose, restart } = game
   const { user } = useAuth()
   const [showHistory, setShowHistory] = useState(false)
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
+
+  useEffect(() => {
+    if (!showExitConfirm) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowExitConfirm(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showExitConfirm])
+
+  const handleConfirmExit = () => {
+    sound.playClick()
+    setShowExitConfirm(false)
+    onExit()
+  }
 
   const color = state.players[state.turn]
   const actingColor = state.actingColor ?? getActingColor(state)
@@ -107,7 +146,22 @@ export default function GameScreen({ game, onExit }: Props) {
                 )}
               </div>
             </div>
-            <MuteToggle />
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <MuteToggle />
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playClick()
+                  setShowExitConfirm(true)
+                }}
+                className="inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium transition-colors text-ivory/80 hover:text-ruby hover:bg-ruby/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ruby cursor-pointer"
+                title="Exit match"
+                aria-label="Exit match"
+              >
+                <ExitGateIcon className="w-4 h-4 text-ruby-light" />
+                <span className="hidden sm:inline">Exit</span>
+              </button>
+            </div>
           </div>
 
           <div className="stitch my-5" />
@@ -205,26 +259,18 @@ export default function GameScreen({ game, onExit }: Props) {
             })}
           </ol>
 
-          <div className="mt-6 flex gap-3">
-            {restart && (
-              <button
-                className="btn-quiet"
-                onClick={() => {
-                  sound.playClick()
-                  restart()
-                }}
-              >
-                Restart
-              </button>
-            )}
+          <div className="mt-6 flex items-center">
             <button
-              className="btn-quiet"
+              type="button"
+              className="btn-quiet inline-flex items-center gap-2 px-3.5 py-2 text-sm text-ivory/80 hover:text-ruby hover:border-ruby/40 hover:bg-ruby/10 transition-colors cursor-pointer"
               onClick={() => {
                 sound.playClick()
-                onExit()
+                setShowExitConfirm(true)
               }}
+              title="Exit match"
             >
-              Back to menu
+              <ExitGateIcon className="w-4 h-4 text-ruby-light" />
+              <span>Exit match</span>
             </button>
           </div>
         </aside>
@@ -344,13 +390,67 @@ export default function GameScreen({ game, onExit }: Props) {
                 </button>
               )}
               <button
-                className={restart ? 'btn-quiet' : 'btn-primary flex-1'}
+                className={`inline-flex items-center justify-center gap-1.5 ${restart ? 'btn-quiet' : 'btn-primary flex-1'}`}
                 onClick={() => {
                   sound.playClick()
                   onExit()
                 }}
               >
-                Menu
+                <ExitGateIcon className="w-4 h-4" />
+                <span>Menu</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExitConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-cloth-deep/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="exit-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              sound.playClick()
+              setShowExitConfirm(false)
+            }
+          }}
+        >
+          <div className="w-full max-w-sm rounded-xl bg-cloth p-6 ring-1 ring-ivory/20 shadow-2xl text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-ruby/20 ring-1 ring-ruby/40 text-ruby-light">
+              <ExitGateIcon className="w-7 h-7" />
+            </div>
+
+            <h2 id="exit-modal-title" className="font-display text-2xl text-ivory">
+              Exit match?
+            </h2>
+
+            <p className="mt-2 text-sm text-ivory-dim">
+              Are you sure you want to exit the match?
+            </p>
+            <p className="mt-1 text-xs text-ivory-dim/70">
+              Any unsaved progress in this match will be lost.
+            </p>
+
+            <div className="mt-6 flex gap-3 justify-center">
+              <button
+                type="button"
+                className="btn-quiet flex-1 cursor-pointer py-2 text-sm"
+                onClick={() => {
+                  sound.playClick()
+                  setShowExitConfirm(false)
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="flex-1 cursor-pointer inline-flex items-center justify-center gap-2 rounded-lg bg-ruby px-4 py-2 text-sm font-semibold text-ivory shadow-lg hover:bg-ruby-light transition-colors"
+                onClick={handleConfirmExit}
+              >
+                <ExitGateIcon className="w-4 h-4" />
+                <span>Yes, Exit</span>
               </button>
             </div>
           </div>
